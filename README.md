@@ -1,91 +1,97 @@
 # TermTrack
-A terminal-rendered 3D platforming/maze game with focus on speedrunning and custom level creation
 
-https://github.com/user-attachments/assets/27e9e3ad-81ff-4e92-977d-c8ae899da69b
+A terminal-rendered 3D platforming and maze game, made for speedrunning and
+custom levels. Every frame is drawn in true colour, one character cell at a
+time: corridors, half walls to climb, holes to jump, spikes, and the angry
+pixels that hunt you. Find the end, as fast as you can.
 
-## Requirements
-You will need a terminal to play this game. But all teminals are not created the same. For the moment we recommend that you use [windows-terminal](https://www.microsoft.com/store/productId/9N0DX20HK701?ocid=pdpshare) availible in the microsoft store (further testing will be done in the future)
+This is the Asciiverse edition of TermTrack by the TermTrack team (TageDan
+and abbfelarb, 2024). It plays in any terminal, offline, and keeps your best
+times on your own computer. What changed is listed in PATCHES.md.
 
-## Install
-### Windows
-Install the zip-folder from the releases section or using the link: [https://tagedan.github.io/TermTrack/TERMTRACK_WINDOWS.zip](https://termtrack.github.io/TermTrack/TERMTRACK_WINDOWS.zip)
-Extract it into a folder of your choice.
-### Linux
-Install the zip-folder from the releases section or using the link: [https://tagedan.github.io/TermTrack/TERMTRACK_LINUX.zip](https://termtrack.github.io/TermTrack/TERMTRACK_LINUX.zip)
-Extract it into a folder of your choice.
+## Play
 
-## Run
-In the extracted "TermTrack" folder run:
-```bash
-example/TermTrack> termtrack level_pack_0
-```
-where ```level_pack_0``` can be substituted for the name of the folder containing the levels you want to play.
+With [av](https://asciiverse.sh): `av install termtrack`, then start it from
+av. From a release archive: unpack it and run `termtrack`; it plays the
+levels in the `levels` folder beside it.
 
-### From source
-Unfortunaly, due to the need of a secret salt to validate the leaderboard you cannot build this project from source and expect it to work with the leaderboard. We are working on a seperate branch where the leaderboard will instead be local and therefore can be built from source.
+    termtrack                 # the levels beside the program
+    termtrack my_levels       # a folder of your own levels
 
-## Level Layout/Creation
-A level is represented by a textfile with the format level_name.txt (or any other file extention, everything up until the last '.' will be the level name)
-To build a level you write characters that will represent the grid of the actual level. There are 8 grid-types at the moment, these are:
+A terminal of at least 80x24 with true colour; bigger is better. Terminals
+that report key releases (kitty, WezTerm, foot, Ghostty, Alacritty, Windows
+Terminal) feel best; in others a key counts as held while it repeats.
 
-- 'S' (start grid)
-- 'E' (end grid)
-- 'X' (wall)
-- 'x' (half-wall / stair)
-- 'v' (spike)
-- '.' (floor)
-- ' ' (hole)
-- 'e' (enemy / angry-pixel spawn)
+## Controls
 
-There is also the floor seperator represented by a new row containing only *sep* after wich the next floor can be built.
+- `W` `A` `S` `D`: move
+- arrow keys: turn and look up and down
+- `Space`: jump
+- `M`: the map of the floor you are on
+- `R`: start the level again
+- `E` or `Esc`: leave the level (or the game, from the menu)
+- `Q` or `Ctrl-C`: quit at once
 
+In the menu, `Up` and `Down` choose a level, `Enter` plays it and `L` shows
+your best times on it. The clock starts when you first move.
 
-Example_level.txt:
-``` 
-XXX
-XSX
-XvX
-X.X
-XxX
-XXX
-sep
-XXXXXXX
-X....EX
-X.XXXXX
-X.X
-X X
-XXX
-```
-This level will have two floors with the lower floor containing the start and the stair to the second floor as well as a spike between them and the upper floor containing the end.
-To then play the lavel you need to put it into a folder next to termtrack.exe and then run:
-```bash
-TermTrack> termtrack <level_folder_name> 
-```
-replacing `<level_folder_name>` with the name of your folder.
+## Your times
 
-## Known bugs
-Lazy error handling of network-requests leads to game crashing when offline. 
-Leaderboard validation is faulty. 
-Terminal focus can be hard to regain when lost.
-Music crackling on high load.
+Each finished run is kept in `$XDG_STATE_HOME/termtrack/times`
+(`~/.local/state/termtrack/times`; `%LOCALAPPDATA%\termtrack\times` on
+Windows). A level is known by its name and its contents, so an edited level
+starts a new list.
 
-## Future plans
-- [X] [Standalone Leaderboard](https://github.com/TermTrack/TrackLeaderboard)
-- [ ] Enemy sound
-- [ ] [Level Editor](https://github.com/TermTrack/TrackEditor)
-- [ ] Discord Bot
-- [ ] 3D-object file loader
+## Making levels
 
-## Support
-If you have any questions, please look at the github-discussions tab to see if it has already been answered or start a new discussion.
+A level is a text file; everything before the last `.` in its name is the
+level's name. Each character is one cell of the grid:
 
-## Contributing
-Feel free to create a issue if you have a feature that you would like to see implemented. You are also free to fork the project and make a pr if you have made an improvement.
+- `S` start
+- `E` end
+- `X` wall
+- `x` half wall, a step up
+- `v` spike
+- `.` floor
+- ` ` (space) hole
+- `e` floor with an angry pixel
 
-## Acknowledgements
-- [abbfelarb](https://github.com/abbfelarb) - Owner
-- [TageDan](https://github.com/TageDan) - Owner
-- [GustavPetterssonBjorklund](https://github.com/GustavPetterssonBjorklund) - For suggesting security actions
-- https://patorjk.com/software/taag/ - for generating the title-art
-- The Rust programming language and The terminal :) - for making this possible
+A line holding only `sep` starts the next floor up. For example:
 
+    XXX
+    XSX
+    XvX
+    X.X
+    XxX
+    XXX
+    sep
+    XXXXXXX
+    X....EX
+    X.XXXXX
+    X.X
+    X X
+    XXX
+
+Two floors: the start, a spike and a step up on the lower one, the end on
+the upper one. Put your levels in a folder and run `termtrack <folder>`.
+
+## Session log
+
+`TERMTRACK_LOG=termtrack.log termtrack` writes every key as it arrives,
+every change of screen and a snapshot of the player twice a second;
+`RUST_LOG=trace` adds every frame. `RUST_LOG=debug termtrack 2>log` works
+too.
+
+## Building
+
+    cargo build --release
+    ./target/release/termtrack levels
+
+## Credits
+
+TermTrack by the TermTrack team: TageDan and abbfelarb, with thanks from
+the team to GustavPetterssonBjorklund for suggesting security actions, and
+to https://patorjk.com/software/taag/ for generating the title art. MIT
+licence (LICENSE), Copyright (c) 2024 TermTrack.
+
+Asciiverse edition: see PATCHES.md.

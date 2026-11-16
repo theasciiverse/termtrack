@@ -159,3 +159,21 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Every shipped level loads, with a start and a way to its end.
+    #[test]
+    fn shipped_levels_load() {
+        let mut n = 0;
+        for entry in std::fs::read_dir("levels").unwrap() {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains('S') && text.contains('E'), "{}", path.display());
+            let map = crate::loader::load(&path);
+            assert!(!map.colliders.is_empty(), "{}", path.display());
+            n += 1;
+        }
+        assert_eq!(n, 5);
+    }
+}

@@ -1,0 +1,119 @@
+# Builds TermTrack for the Asciiverse catalog: one archive per target, named
+# <id>-<target>.tar.gz (Linux, macOS) or .zip (Windows), plus a SHA256SUMS file,
+# attached to a GitHub release (hub/catalog/SCHEMA.md, release.source = "github").
+#
+# On the pattern of AsciiArena's. Tags look like v1.0.0+20250516-av.1: the
+# team's 1.0.0, the date of upstream's last commit, our build number.
+# TermTrack is pure Rust with no system libraries (no sound, no network), so
+# Linux builds are static musl binaries that run on any distribution. Rust is
+# pinned to 1.93.1: 1.99 and 1.100 were seen to hang compiling some crates
+# (rust-lang/rust#164727). macOS builds run on macos-15 (Apple silicon) and
+# macos-15-intel. Every job has a time limit, and the release publishes
+# whatever built, so one stuck runner never holds back the others. The
+# archives carry the program, its levels/ folder beside it, README.md and
+# LICENSE.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to build and release"
+        required: true
+
+env:
+  ID: termtrack
+  BIN: termtrack
+  TAG: ${{ inputs.tag || github.ref_name }}
+  RUST: "1.93.1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, test: true }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, runner: macos-15 }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel }
+          - { target: x86_64-pc-windows-msvc, runner: windows-2022, exe: .exe }
+          - { target: aarch64-pc-windows-msvc, runner: windows-2022, exe: .exe }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST" --profile minimal --target ${{ matrix.target }}
+          rustup default "$RUST"
+
+      - name: musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Test
+        if: matrix.test
+        run: cargo test --release --locked
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }}
+          file target/${{ matrix.target }}/release/$BIN${{ matrix.exe }} || true
+
+      - name: Package for av
+        shell: bash
+        run: |
+          # the binary sits at the top of the archive, where av looks for it,
+          # with the levels beside it
+          mkdir -p stage dist
+          cp target/${{ matrix.target }}/release/$BIN${{ matrix.exe }} README.md LICENSE stage/
+          cp -R levels stage/
+          if [ -n "${{ matrix.exe }}" ]; then
+            (cd stage && 7z a -tzip "../dist/$ID-${{ matrix.target }}.zip" .)
+          else
+            strip stage/$BIN || true
+            tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: [build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "TermTrack $TAG" \
+                 --notes "TermTrack $TAG for the Asciiverse catalog. Its README lists the controls and the level format."
+          gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber
