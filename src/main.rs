@@ -1,147 +1,103 @@
-use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
-use crossterm::{self, execute};
+use input::Input;
 use loader::*;
 use mat::Vec3;
 use renderer::Screen;
-use rodio::OutputStream;
-use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::io::stdout;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
-use std::time::Duration;
 
-mod audio;
 mod camera;
 mod enemies;
 mod game;
+mod input;
 mod loader;
 mod mat;
-mod network;
+mod records;
 mod renderer;
 mod screens;
 
-#[derive(Default,Clone)]
-struct Keys {
-    pub w: bool,
-    pub a: bool,
-    pub s: bool,
-    pub d: bool,
-    pub space: bool,
-    pub up: bool,
-    pub left: bool,
-    pub down: bool,
-    pub right: bool,
-    pub enter: bool,
-    pub e: bool,
-    pub m: bool,
-    pub r: bool,
-    pub l: bool,
-    pub delete: bool,
-    pub other: HashSet<char>,
+/// The level folder: the one named on the command line, else `levels` beside
+/// the program (where the release archive puts it), else `levels` here.
+fn level_dir() -> PathBuf {
+    if let Some(dir) = env::args_os().nth(1) {
+        return PathBuf::from(dir);
+    }
+    if let Some(dir) = env::current_exe()
+        .ok()
+        .and_then(|exe| fs::canonicalize(exe).ok())
+        .and_then(|exe| exe.parent().map(|d| d.join("levels")))
+        .filter(|d| d.is_dir())
+    {
+        return dir;
+    }
+    PathBuf::from("levels")
 }
 
-impl Keys {
-    fn clone_reset_enter(&mut self) -> Self{
-        let clone = self.clone();
-        self.enter = false;
-        clone
-    }
+/// Puts the terminal back as it was.
+pub fn restore_terminal() {
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PopKeyboardEnhancementFlags,
+        crossterm::cursor::Show
+    );
+    let _ = crossterm::terminal::disable_raw_mode();
+    print!("\x1b[0m\x1b[2J\x1b[H");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 fn main() {
+    // session log: RUST_LOG=debug termtrack 2>termtrack.log, or
+    // TERMTRACK_LOG=termtrack.log termtrack (debug unless RUST_LOG says
+    // otherwise; trace adds a line for every frame)
+    let log_file = env::var_os("TERMTRACK_LOG")
+        .filter(|f| !f.is_empty())
+        .and_then(|f| fs::OpenOptions::new().create(true).append(true).open(f).ok());
+    let default_filter = if log_file.is_some() { "debug" } else { "off" };
+    let mut logger = env_logger::Builder::new();
+    logger
+        .parse_filters(&env::var("RUST_LOG").unwrap_or_else(|_| default_filter.into()))
+        .format_timestamp_millis();
+    if let Some(file) = log_file {
+        logger.target(env_logger::Target::Pipe(Box::new(file)));
+        logger.write_style(env_logger::WriteStyle::Never);
+    }
+    logger.init();
 
-    let mut stdout = stdout();
-
-execute!(
-    stdout,
-    PushKeyboardEnhancementFlags(
-        KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-    )
-);
-    
-    let level_dir = env::args().collect::<Vec<String>>()[1].clone();
-    let entries = fs::read_dir(level_dir).unwrap();
-    let levels: Vec<PathBuf> = entries.map(|e| e.unwrap().path()).collect();
-    let (_stream, stream_handle) = OutputStream::try_default().expect("couldnt get sound handle!");
-    crossterm::terminal::enable_raw_mode().unwrap();
-    let focused = Arc::new(Mutex::new(true));
-    let focused_clone = Arc::clone(&focused);
-
-    let keys = Arc::new(Mutex::new(Keys::default()));
-    let keys_clone = Arc::clone(&keys);
-    let key_check_thread = thread::spawn(move || {
-        let mut last_enter = std::time::Instant::now();
-        loop {
-            
-            match read().unwrap() {
-                Event::FocusLost => *focused_clone.lock().unwrap() = false,
-                Event::FocusGained => *focused_clone.lock().unwrap() = true,
-                Event::Key(event) => {
-                    
-                    if event.is_press() {
-                        match event.code {
-                            KeyCode::Char('w') => keys_clone.lock().unwrap().w = true, 
-                            KeyCode::Char('a') => keys_clone.lock().unwrap().a = true, 
-                            KeyCode::Char('s') => keys_clone.lock().unwrap().s = true, 
-                            KeyCode::Char('d') => keys_clone.lock().unwrap().d = true, 
-                            KeyCode::Char('e') => keys_clone.lock().unwrap().e = true, 
-                            KeyCode::Char('l') => keys_clone.lock().unwrap().l = true, 
-                            KeyCode::Char('r') => keys_clone.lock().unwrap().r = true, 
-                            KeyCode::Char('m') => keys_clone.lock().unwrap().m = true, 
-                            KeyCode::Backspace => keys_clone.lock().unwrap().delete = true,
-                            KeyCode::Enter =>  {
-                                // enter is special because its often used to switch menus we want to give the user some times before pressing enter again
-                                if std::time::Instant::now() - last_enter > std::time::Duration::from_millis(300) {
-                                keys_clone.lock().unwrap().enter = true;
-                                last_enter = std::time::Instant::now();
-                                
-                            }
-                        },
-                            KeyCode::Left => keys_clone.lock().unwrap().left = true,
-                            KeyCode::Right => keys_clone.lock().unwrap().right = true,
-                            KeyCode::Up => keys_clone.lock().unwrap().up = true,
-                            KeyCode::Down => keys_clone.lock().unwrap().down = true,
-                            KeyCode::Char(' ') => keys_clone.lock().unwrap().space = true,
-                            _ => ()
-                            
-                            
-                        }   
-                    }
-                    if event.is_release() {
-                        match event.code {
-                            KeyCode::Char('w') => keys_clone.lock().unwrap().w = false, 
-                            KeyCode::Char('a') => keys_clone.lock().unwrap().a = false, 
-                            KeyCode::Char('s') => keys_clone.lock().unwrap().s = false, 
-                            KeyCode::Char('d') => keys_clone.lock().unwrap().d = false, 
-                            KeyCode::Char('e') => keys_clone.lock().unwrap().e = false, 
-                            KeyCode::Char('l') => keys_clone.lock().unwrap().l = false, 
-                            KeyCode::Char('r') => keys_clone.lock().unwrap().r = false, 
-                            KeyCode::Char('m') => keys_clone.lock().unwrap().m = false, 
-                            KeyCode::Backspace => keys_clone.lock().unwrap().delete = false,
-                            KeyCode::Left => keys_clone.lock().unwrap().left = false,
-                            KeyCode::Right => keys_clone.lock().unwrap().right = false,
-                            KeyCode::Up => keys_clone.lock().unwrap().up = false,
-                            KeyCode::Down => keys_clone.lock().unwrap().down = false,
-                            KeyCode::Char(' ') => keys_clone.lock().unwrap().space = false,
-                            _ => ()
-                            
-                            
-                        }   
-                        
-                    }
-                },
-                _ => (),
+    let dir = level_dir();
+    let mut levels: Vec<PathBuf> = match fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect(),
+        Err(err) => {
+            eprintln!("termtrack: cannot read the level folder {}: {err}", dir.display());
+            eprintln!("usage: termtrack [level folder]");
+            std::process::exit(1);
         }
     };
-    });
+    levels.sort();
+    if levels.is_empty() {
+        eprintln!("termtrack: no levels in {}", dir.display());
+        std::process::exit(1);
+    }
+    log::info!("{} levels from {}", levels.len(), dir.display());
+
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        log::error!("panic: {info}");
+        default_hook(info);
+    }));
+
+    crossterm::terminal::enable_raw_mode().unwrap();
+    let input = Input::start();
 
     loop {
-        let chosen_level = screens::menu(levels.clone(), &stream_handle, focused.clone(), keys.clone());
+        log::info!("state: menu");
+        let chosen_level = screens::menu(levels.clone(), &input);
         let map = loader::load(&levels[chosen_level]);
+        log::info!("state: level {} ({})", map.level_name, levels[chosen_level].display());
 
         loop {
             let mut game = game::Game {
@@ -165,33 +121,35 @@ execute!(
                     },
                 },
             };
-            match game.run(map.clone(), &stream_handle, focused.clone(), keys.clone()) {
+            input.clear_presses();
+            let result = game.run(map.clone(), &input);
+            log::info!("state: run ended: {:?}", result);
+            match result {
                 Ok(time) => {
-                    if screens::finish(time, &map.level_name, &map.map_string, focused.clone(), keys.clone()) == 1
-                    {
+                    if screens::finish(time, &map.level_name, &map.map_string, &input) == 1 {
                         continue;
                     }
                 }
                 Err(e) => match e {
                     "void" => {
-                        if screens::game_over("You fell into the void!", focused.clone(), keys.clone()) {
+                        if screens::game_over("You fell into the void!", &input) {
                             continue;
                         }
                     }
                     "angry_pixel" => {
-                        if screens::game_over("Angry pixel killed you!", focused.clone(), keys.clone()) {
+                        if screens::game_over("Angry pixel killed you!", &input) {
                             continue;
                         }
                     }
                     "spike" => {
-                        if screens::game_over("You died of spike!", focused.clone(), keys.clone()) {
+                        if screens::game_over("You died of spike!", &input) {
                             continue;
                         }
                     }
                     "menu" => (),
                     "retry" => continue,
                     _ => {
-                        if screens::game_over("You failed!", focused.clone(), keys.clone()) {
+                        if screens::game_over("You failed!", &input) {
                             continue;
                         }
                     }
