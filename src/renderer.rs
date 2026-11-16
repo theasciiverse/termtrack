@@ -7,23 +7,38 @@ pub const RENDER_DIST: f64 = 30.;
 
 pub fn get_terminal_size() -> (usize, usize) {
     let (w, h) = crossterm::terminal::size().unwrap();
-    let w = (w as usize).min(220);
-    let h = (h as usize).min(65);
+    (w as usize, h as usize)
+}
+
+/// Asciiverse: the size the 3D view is rendered at. Upstream capped the
+/// view at 220x65 cells to keep the frame rate (every cell is a traced
+/// ray) and left the rest of a bigger terminal black. Here the render is
+/// scaled down evenly to fit that budget and then stretched over the whole
+/// terminal by `flush`, so the view fills the screen at the same cost.
+fn render_size(tw: usize, th: usize) -> (usize, usize) {
+    let k = (220.0 / tw.max(1) as f64).min(65.0 / th.max(1) as f64).min(1.0);
+    let w = ((tw as f64 * k).round() as usize).max(1);
+    let h = ((th as f64 * k).round() as usize).max(1);
     (w, h)
 }
 
 #[derive(Clone)]
 pub struct Screen {
+    /// the rendered view, in cells
     pub w: usize,
     pub h: usize,
+    /// the terminal it is shown on (th without the status line)
+    pub tw: usize,
+    pub th: usize,
 }
 
 impl Screen {
     pub fn new() -> Self {
-        let (w, h) = get_terminal_size();
+        let (tw, th) = get_terminal_size();
         let mut stdout = std::io::stdout();
         crossterm::execute!(stdout, crossterm::cursor::Hide).unwrap();
-        let h = h - 1;
+        let th = th.saturating_sub(1).max(1);
+        let (w, h) = render_size(tw, th);
 
         //clear screen
         print!("\x1b[2J\x1b[H\r");
@@ -40,7 +55,7 @@ impl Screen {
             h
         ];
 
-        Screen { w, h }
+        Screen { w, h, tw, th }
     }
 
     pub fn flush(&mut self, buffer: &[Vec<Vec3>], ascii: bool, extra: &str) {
@@ -51,9 +66,17 @@ impl Screen {
             y: 0.,
             z: 0.,
         };
-        // Iterate through buffer
-        for y in 0..buffer.len() {
-            for x in 0..buffer[y].len() {
+        // Iterate over the terminal, each cell taking the rendered pixel
+        // under it (the view is stretched to fill the terminal)
+        let bh = buffer.len();
+        let bw = buffer.first().map_or(0, |r| r.len());
+        if bh == 0 || bw == 0 {
+            return;
+        }
+        for ty in 0..self.th {
+            let y = (ty * bh / self.th).min(bh - 1);
+            for tx in 0..self.tw {
+                let x = (tx * bw / self.tw).min(bw - 1);
                 // Add ' ' (char if ascii is true) withrightcolor to string buffer
                 let mut c = ' ';
                 // set background
@@ -82,17 +105,28 @@ impl Screen {
                 }
             }
             pix_buffer += "\x1b[48;2;0;0;0m\r\n";
+            // the background was just reset to black: forget the last colour,
+            // or a row starting in it would draw its first cell black
+            color = Vec3 {
+                x: -1.,
+                y: -1.,
+                z: -1.,
+            };
         }
-        pix_buffer += &format!("{:<1$}", extra, self.w);
+        pix_buffer += &format!("{:<1$}", extra, self.tw);
 
         //Move cursor home and print string buffer
         print!("\x1b[H{}", pix_buffer);
 
-        let (w, h) = get_terminal_size();
-        if self.w != w || self.h != h - 1 {
+        let (tw, th) = get_terminal_size();
+        let th = th.saturating_sub(1).max(1);
+        if self.tw != tw || self.th != th {
             print!("\x1b[2J\r");
+            self.tw = tw;
+            self.th = th;
+            let (w, h) = render_size(tw, th);
             self.w = w;
-            self.h = h - 1;
+            self.h = h;
         }
     }
 
@@ -194,7 +228,7 @@ impl Screen {
     }
 
     fn print_info(&self, camera: &Camera, extra: &str) {
-        print!("\x1b[48;1;0m{:<1$}", extra, self.w);
+        print!("\x1b[48;1;0m{:<1$}", extra, self.tw);
     }
 
     pub fn render_map(&self, map: &str, position: Vec3, grid_width: f64, grid_height: f64) {
@@ -239,8 +273,8 @@ impl Screen {
 
         print!("\x1b[48;2;000;000;000m\x1b[\r");
 
-        let x_start = self.w / 2 - width / 2 - 2;
-        let y_start = self.h / 2 - height / 2 - 3;
+        let x_start = (self.tw / 2).saturating_sub(width / 2 + 2);
+        let y_start = (self.th / 2).saturating_sub(height / 2 + 3);
 
         println!("\x1b[{};{}H*{:-^3$}*\r", y_start, x_start, "-", width + 4);
         println!(

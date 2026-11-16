@@ -85,3 +85,12 @@ the `asciiverse` branch starts from it.
   only changed cells (colours in steps of 7) to stay under 2 MB.
 - README.md rewritten for players, keeping upstream's level format; this
   file.
+
+- **The view fills the terminal** (`src/renderer.rs`): upstream capped the
+  3D view at 220x65 cells (every cell is a traced ray) and left the rest of
+  a bigger terminal black, in the top left corner. Now the view is rendered
+  within the same budget, scaled down evenly so its shape stays true, and
+  stretched over the whole terminal, so a big window is filled at the same
+  frame rate (about 36 fps at 300x90 here). Menus centre on the whole
+  terminal. Also: after each row the colour memory is reset with the
+  background, so a row never starts with a cell drawn black.
